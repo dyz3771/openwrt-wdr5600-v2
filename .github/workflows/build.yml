@@ -1,0 +1,75 @@
+name: Build OpenWrt for TL-WDR5600 v2
+
+# 手动点 "Run workflow" 触发；推送到 master 也会自动跑
+on:
+  workflow_dispatch:
+  push:
+    branches: [ master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360   # 最多 6 小时
+    steps:
+      - name: 拉取本仓库（含 patches/）
+        uses: actions/checkout@v4
+
+      - name: 安装编译依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang flex bison g++ gawk \
+            gcc-multilib g++-multilib gettext git libncurses-dev libssl-dev \
+            python3-dev python3-setuptools rsync unzip zlib1g-dev file wget subversion
+
+      - name: 拉取 OpenWrt v19.07.4 源码
+        run: |
+          git clone --depth 1 --branch v19.07.4 https://github.com/openwrt/openwrt.git openwrt
+
+      - name: 应用 WDR5600 v2 设备补丁
+        run: |
+          cd openwrt
+          git config user.email "build@local"
+          git config user.name "ci-build"
+          git am --whitespace=nowarn ../patches/0001-add-tl-wdr5600-v2-support.patch
+          git am --whitespace=nowarn ../patches/0002-ath79-drop-redundant-chosen-bootargs-for-tl-wdr5600-.patch
+
+      - name: 更新并安装 feeds
+        run: |
+          cd openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: 写入配置种子并 defconfig
+        run: |
+          cd openwrt
+          cat > .config <<EOF
+          CONFIG_TARGET_ath79=y
+          CONFIG_TARGET_ath79_generic=y
+          CONFIG_TARGET_DEVICE_ath79_generic_DEVICE_tplink_tl-wdr5600-v2=y
+          CONFIG_PACKAGE_luci=y
+          CONFIG_PACKAGE_ppp=y
+          CONFIG_PACKAGE_ppp-mod-pppoe=y
+          CONFIG_PACKAGE_luci-proto-ppp=y
+          EOF
+          make defconfig
+          echo "===== 已选中的设备（核对） ====="
+          grep -E "CONFIG_TARGET_DEVICE_ath79_generic_DEVICE_tplink_tl-wdr5600-v2|CONFIG_PACKAGE_luci=" .config
+
+      - name: 下载源码包
+        run: cd openwrt && make download -j4
+
+      - name: 编译（-j2 防止内存不足被杀）
+        run: cd openwrt && make -j2 V=s
+
+      - name: 收集产物
+        run: |
+          cd openwrt/bin/targets/ath79/generic
+          ls -lh *tl-wdr5600-v2* || true
+
+      - name: 上传固件
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-wdr5600-v2-sysupgrade
+          path: |
+            openwrt/bin/targets/ath79/generic/*tl-wdr5600-v2*sysupgrade.bin
+          if-no-files-found: error
