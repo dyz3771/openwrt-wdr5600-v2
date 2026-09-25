@@ -1,0 +1,6 @@
+# 强制关键文件使用 LF 换行，避免 Windows CRLF 破坏补丁/工作流
+* text=auto
+*.patch text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
